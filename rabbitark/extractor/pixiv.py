@@ -4,29 +4,21 @@ from rabbitark.config import config
 from rabbitark.error import NotFound
 from rabbitark.rabbitark import RabbitArk
 from rabbitark.utils.default_class import DownloadInfo, Image
-from rabbitark.utils.request import Requester
+from rabbitark.utils.request import Request
 from rabbitark.utils.utils import folder_name_checker, get_urls, split
+import aiohttp
 
 
-class PixivRequester(Requester):
+class PixivRequester(Request):
     def __init__(self):
-        super().__init__(
-            headers={
-                "accept-encoding": "gzip, deflate, br",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.97 Safari/537.36",
-                "referer": "https://pixiv.net",
-                "sec-fetch-mode": "cors",
-                "sec-fetch-site": "same-origin",
-            },
-            cookies=config.COOKIES,
-        )
+        super().__init__()
 
     # async def get_postkey(self):
-    #     r = await self.get("https://www.pixiv.net/", "text")
+    #     r = await self.session_get("https://www.pixiv.net/", "text")
     #     return re.findall(r'.*pixiv.context.token = "([a-z0-9]{32})"?.*', r.body)[0]
 
     async def get_illust_info(self, illust_id):
-        info = await self.get(
+        info = await self.session_get(
             f"https://www.pixiv.net/ajax/illust/{illust_id}",
             "json",
         )
@@ -36,14 +28,14 @@ class PixivRequester(Requester):
             return
 
     async def get_illust_urls(self, illust_id):
-        info = await self.get(
+        info = await self.session_get(
             f"https://www.pixiv.net/ajax/illust/{illust_id}/pages",
             "json",
         )
         return [page["urls"]["original"] for page in info.body["body"]]
 
     async def get_user_info(self, user_id):
-        info = await self.get(
+        info = await self.session_get(
             f"https://www.pixiv.net/ajax/user/{user_id}?full=1", "json"
         )
         if info.status == 200:
@@ -52,7 +44,7 @@ class PixivRequester(Requester):
             return None
 
     async def get_user_all_illust(self, user_id):
-        info = await self.get(
+        info = await self.session_get(
             f"https://www.pixiv.net/ajax/user/{user_id}/profile/all",
             "json",
         )
@@ -103,17 +95,30 @@ class Pixiv(PixivRequester):
         super().__init__()
 
     async def extractor_download(self, downloadable: Any) -> DownloadInfo:
-        if downloadable.isdigit():
-            info = await self.checking_id(downloadable)
-        else:
-            if "artwork" in downloadable:
-                info = await self.single_images(split(downloadable))
-            elif "user" in downloadable:
-                info = await self.user(split(downloadable))
+        self.session = aiohttp.ClientSession(
+            headers={
+                "accept-encoding": "gzip, deflate, br",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.97 Safari/537.36",
+                "referer": "https://pixiv.net",
+                "sec-fetch-mode": "cors",
+                "sec-fetch-site": "same-origin",
+            },
+            cookies=config.COOKIES,
+        )
+        try:
+            if downloadable.isdigit():
+                info = await self.checking_id(downloadable)
             else:
-                raise NotFound(downloadable)
+                if "artwork" in downloadable:
+                    info = await self.single_images(split(downloadable))
+                elif "user" in downloadable:
+                    info = await self.user(split(downloadable))
+                else:
+                    raise NotFound(downloadable)
 
-        if not info:
-            raise NotFound(downloadable)
+            if not info:
+                raise NotFound(downloadable)
+        finally:
+            await self.session.close()
 
         return info
